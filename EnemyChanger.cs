@@ -1,61 +1,79 @@
 ﻿#define SPRITEDUMPER
 
-using System;
+using System.Collections;
 using System.Collections.Generic;
-using System.Data;
 using System.IO;
 using System.Linq;
 using System.Reflection;
-using System.Text.RegularExpressions;
-using IL.InControl;
-using Modding;
 using SFCore.Generics;
 using SFCore.Utils;
 using UnityEngine;
+using Object = UnityEngine.Object;
 
 namespace EnemyChanger
 {
-    class ECGlobalSettings
+    class EcGlobalSettings
     {
         public bool DumpSprites = true;
     }
 
-    class EnemyChanger : GlobalSettingsMod<ECGlobalSettings>
+    class EnemyChanger : GlobalSettingsMod<EcGlobalSettings>
     {
-        private readonly string DIR;
-        private readonly string FOLDER = "SpriteChanger";
-        private readonly Texture2D emptyTex = new Texture2D(2, 2);
+        private readonly string _dir;
+        private readonly Texture2D _emptyTex = new Texture2D(2, 2);
 
-        public override string GetVersion() => SFCore.Utils.Util.GetVersion(Assembly.GetExecutingAssembly());
+        public override string GetVersion() => Util.GetVersion(Assembly.GetExecutingAssembly());
+
+#if SPRITEDUMPER
+        private Dictionary<string, Sprite> _sprites = new Dictionary<string, Sprite>();
+        public override List<(string, string)> GetPreloadNames()
+        {
+            List<(string, string)> ret = new List<(string, string)>();
+            //for (int i = 0; i < UnityEngine.SceneManagement.SceneManager.sceneCountInBuildSettings; i++)
+            for (int i = 0; i < 20; i++)
+            {
+                if (i < 4) continue;
+                if (i == 5) continue;
+                if (i == 403) continue;
+                if (i >= 410 && i <= 419) continue;
+                if (i == 421) continue;
+                if (i == 465) continue;
+                if (i == 472) continue;
+                if (i == 480) continue;
+                if (i == 483) continue;
+                if (i > 498) continue;
+                ret.Add((Path.GetFileNameWithoutExtension(UnityEngine.SceneManagement.SceneUtility.GetScenePathByBuildIndex(i)), "_SceneManager"));
+            }
+            return ret;
+        }
+#endif
 
         public EnemyChanger() : base("Enemy Changer")
         {
-            for (int x = 0; x < emptyTex.width; x++)
+            for (int x = 0; x < _emptyTex.width; x++)
             {
-                for (int y = 0; y < emptyTex.height; y++)
+                for (int y = 0; y < _emptyTex.height; y++)
                 {
-                    emptyTex.SetPixel(x, y, new Color(0, 0, 0, 0));
+                    _emptyTex.SetPixel(x, y, new Color(0, 0, 0, 0));
                 }
             }
-            emptyTex.Apply(true);
-            switch (SystemInfo.operatingSystemFamily)
-            {
-                case OperatingSystemFamily.MacOSX:
-                    DIR = Path.GetFullPath(Application.dataPath + "/Resources/Data/Managed/Mods/" + FOLDER);
-                    break;
-                default:
-                    DIR = Path.GetFullPath(Application.dataPath + "/Managed/Mods/" + FOLDER);
-                    break;
-            }
+            _emptyTex.Apply(true);
 
-            if (!Directory.Exists(DIR)) Directory.CreateDirectory(DIR);
+            _dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "/Sprites/";
+            
+            if (!Directory.Exists(_dir)) Directory.CreateDirectory(_dir);
 
 #if !SPRITEDUMPER
-
             //On.HealthManager.Start += OnHealthManagerStart;
             //On.tk2dSprite.Awake += OnTk2dSpriteAwake;
             On.PlayMakerFSM.Start += OnPlayMakerFsmStart;
-
+#endif
+#if SPRITEDUMPER
+            UnityEngine.SceneManagement.SceneManager.sceneLoaded += (to, settings) =>
+            {
+                Log($"Scene '{to.name}' loaded.");
+                DumpSprites();
+            };
 #endif
         }
 
@@ -63,7 +81,7 @@ namespace EnemyChanger
         {
             if (self.FsmName.Equals("Geo Pool"))
             {
-                Log("Found Geo Pool fsm!");
+                Log("Found Geo Pool fsm.");
                 self.MakeLog();
             }
 
@@ -71,7 +89,6 @@ namespace EnemyChanger
         }
 
 #if !SPRITEDUMPER
-
         //private void OnHealthManagerStart(On.HealthManager.orig_Start orig, HealthManager self)
         //{
         //    DebugLog("!OnHealthManagerStart");
@@ -93,66 +110,91 @@ namespace EnemyChanger
 
             DebugLog("~OnTk2dSpriteAwake");
         }
-
 #endif
 
         public override void Initialize()
         {
             DebugLog("!Initialize");
-            //foreach (var text in Resources.LoadAll<TextAsset>(""))
-            //{
-            //    Log($"Text name: '{text.name}'");
-
-            //    StreamWriter sw = new StreamWriter(new FileStream($"D:\\_ModdingTools\\HK_Text\\{text.name}.txt", FileMode.Create));
-            //    sw.Write(text.text);
-            //    sw.Close();
-            //}
 
 #if SPRITEDUMPER
-
-            UnityEngine.SceneManagement.SceneManager.activeSceneChanged += (from, to) =>
-            {
-                dumpSprites();
-            };
-
+            GameCameras.instance.StartCoroutine(WaitForButton());
+            //GameManager.instance.StartCoroutine(WaitForButton());
 #endif
 
             DebugLog("~Initialize");
         }
 
 #if SPRITEDUMPER
-
-        private void dumpSprites()
+        private IEnumerator WaitForButton()
         {
+            while (true)
+            {
+                yield return new WaitWhile(() => !Input.GetKeyDown(KeyCode.O));
+
+                Log("Dumping sprites now.");
+
+                yield return null;
+                yield return null;
+
+                DumpSprites();
+
+                yield return null;
+                yield return null;
+
+                Log("Sprites dumped.");
+            }
+        }
+
+        private void CollectSprites()
+        {
+            int i = 0;
             foreach (var item in Resources.FindObjectsOfTypeAll<SpriteRenderer>())
             {
                 if (item.sprite == null) continue;
 
+                if (_sprites.ContainsKey(item.sprite.name)) continue;
+
+                i++;
+                Object.DontDestroyOnLoad(item.sprite);
+                _sprites.Add(item.sprite.name, item.sprite);
+            }
+            Log($"Collected {i} sprites.");
+        }
+
+        private void DumpSprites()
+        {
+            //foreach ((var name, var sprite) in sprites)
+            foreach (var item in Resources.FindObjectsOfTypeAll<SpriteRenderer>())
+            {
+                var sprite = item.sprite;
+                if (sprite == null) continue;
+                var name = sprite.name;
+
                 //Log($"Sprite: '{item.sprite.name}'");
 
                 //Log($"\tOrig Size: ({tex.GetRawTextureData().Length}) @ {tex.format}");
-                if (File.Exists($"{this.DIR}/{item.sprite.name}.png"))
+                if (File.Exists($"{_dir}/{name}.png"))
                 {
-                    Log($"File '{item.sprite.name}.png' already exists!");
+                    Log($"File '{name}.png' already exists!");
                 }
                 else
                 {
-                    var tex = ExtractTextureFromSprite(item.sprite);
-                    saveTex(tex, $"{this.DIR}/{item.sprite.name}.png");
-                    Texture2D.DestroyImmediate(tex);
+                    var tex = ExtractTextureFromSprite(sprite);
+                    SaveTex(tex, $"{_dir}/{name}.png");
+                    Object.DestroyImmediate(tex);
                 }
             }
         }
 
-        private void saveTriangle(bool[][] triangle, string spriteName, int num)
+        private void SaveTriangle(bool[][] triangle, string spriteName, int num)
         {
             var outTex = new Texture2D(triangle[0].Length, triangle.Length);
             for (int x = 0; x < triangle[0].Length; x++)
                 for (int y = 0; y < triangle.Length; y++)
                     outTex.SetPixel(x, y, triangle[y][x] ? Color.white : Color.black);
             outTex.Apply();
-            saveTex(outTex, $"{DIR}/{spriteName}/{num}.png");
-            Texture2D.DestroyImmediate(outTex);
+            SaveTex(outTex, $"{_dir}/{spriteName}/{num}.png");
+            Object.DestroyImmediate(outTex);
         }
 
         private static float CalcTriangleArea(Vector2Int a, Vector2Int b, Vector2Int c)
@@ -162,7 +204,7 @@ namespace EnemyChanger
 
         private Texture2D ExtractTextureFromSprite(Sprite testSprite, bool saveTriangles = false)
         {
-            if (saveTriangles && !Directory.Exists($"{DIR}/{testSprite.name}")) Directory.CreateDirectory($"{DIR}/{testSprite.name}");
+            if (saveTriangles && !Directory.Exists($"{_dir}/{testSprite.name}")) Directory.CreateDirectory($"{_dir}/{testSprite.name}");
             var testSpriteRect = (testSprite.texture.width, testSprite.texture.height);
             List<Vector2Int> texUVs = new List<Vector2Int>();
             List<(Vector2Int, Vector2Int, Vector2Int)> triangles = new List<(Vector2Int, Vector2Int, Vector2Int)>();
@@ -231,11 +273,11 @@ namespace EnemyChanger
                 //        contents[y][x] |= triangle[y][x];
             }
             if (saveTriangles)
-                saveTriangle(contents, testSprite.name, 1000000);
+                SaveTriangle(contents, testSprite.name, 1000000);
 
             #endregion
 
-            origTex = makeTextureReadable(testSprite.texture);
+            origTex = MakeTextureReadable(testSprite.texture);
             outTex = new Texture2D(width, height);
 
             for (x = 0; x < width; x++)
@@ -250,15 +292,13 @@ namespace EnemyChanger
             }
             outTex.Apply();
 
-            Texture2D.DestroyImmediate(origTex);
+            Object.DestroyImmediate(origTex);
 
             return outTex;
         }
-
 #endif
 
 #if !SPRITEDUMPER
-
         private string GetGameObjectBaseName(GameObject go)
         {
             DebugLog("!GetGameObjectBaseName");
@@ -314,26 +354,25 @@ namespace EnemyChanger
             }
             DebugLog("~ChangeTk2dSprite");
         }
-
 #endif
 
-        private static Texture2D makeTextureReadable(Texture2D orig)
+        private static Texture2D MakeTextureReadable(Texture2D orig)
         {
             DebugLog("!makeTextureReadable");
             Texture2D ret = new Texture2D(orig.width, orig.height);
-            RenderTexture tempRT = RenderTexture.GetTemporary(orig.width, orig.height, 0);
-            Graphics.Blit(orig, tempRT);
-            RenderTexture tmpActiveRT = RenderTexture.active;
-            RenderTexture.active = tempRT;
-            ret.ReadPixels(new Rect(0f, 0f, (float) tempRT.width, (float) tempRT.height), 0, 0);
+            RenderTexture tempRt = RenderTexture.GetTemporary(orig.width, orig.height, 0);
+            Graphics.Blit(orig, tempRt);
+            RenderTexture tmpActiveRt = RenderTexture.active;
+            RenderTexture.active = tempRt;
+            ret.ReadPixels(new Rect(0f, 0f, (float) tempRt.width, (float) tempRt.height), 0, 0);
             ret.Apply();
-            RenderTexture.active = tmpActiveRT;
-            RenderTexture.ReleaseTemporary(tempRT);
+            RenderTexture.active = tmpActiveRt;
+            RenderTexture.ReleaseTemporary(tempRt);
             DebugLog("~makeTextureReadable");
             return ret;
         }
 
-        private static void saveTex(Texture2D tex, string filename)
+        private static void SaveTex(Texture2D tex, string filename)
         {
             DebugLog("!saveTex");
             using (FileStream fileStream2 = new FileStream(filename, FileMode.Create))
