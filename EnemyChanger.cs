@@ -18,7 +18,7 @@ namespace EnemyChanger
 {
     class EcGlobalSettings
     {
-        public bool DumpSprites = true;
+        public bool DumpSprites = false;
     }
 
     class EnemyChanger : GlobalSettingsMod<EcGlobalSettings>
