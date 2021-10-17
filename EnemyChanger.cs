@@ -1,10 +1,14 @@
-﻿#define SPRITEDUMPER
+﻿//#define SPRITEDUMPER
 
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.InteropServices;
+using System.Security.Cryptography;
+using System.Text.RegularExpressions;
 using SFCore.Generics;
 using SFCore.Utils;
 using UnityEngine;
@@ -64,9 +68,10 @@ namespace EnemyChanger
             if (!Directory.Exists(_dir)) Directory.CreateDirectory(_dir);
 
 #if !SPRITEDUMPER
-            //On.HealthManager.Start += OnHealthManagerStart;
+            On.HealthManager.Awake += OnHealthManagerAwake;
             //On.tk2dSprite.Awake += OnTk2dSpriteAwake;
-            On.PlayMakerFSM.Start += OnPlayMakerFsmStart;
+            //On.tk2dSpriteDefinition.ctor += this.OnTk2dSpriteDefinitionCtor;
+            //On.tk2dSpriteCollectionData.Init += this.OnTk2dSpriteCollectionDataInit;
 #endif
 #if SPRITEDUMPER
             UnityEngine.SceneManagement.SceneManager.sceneLoaded += (to, settings) =>
@@ -77,39 +82,69 @@ namespace EnemyChanger
 #endif
         }
 
-        private void OnPlayMakerFsmStart(On.PlayMakerFSM.orig_Start orig, PlayMakerFSM self)
+        private void OnTk2dSpriteCollectionDataInit(On.tk2dSpriteCollectionData.orig_Init orig, tk2dSpriteCollectionData self)
         {
-            if (self.FsmName.Equals("Geo Pool"))
-            {
-                Log("Found Geo Pool fsm.");
-                self.MakeLog();
-            }
-
+            DebugLog("!OnTk2dSpriteCollectionDataInit");
+            ChangeTk2dSpriteCollectionData(self);
             orig(self);
+            DebugLog("~OnTk2dSpriteCollectionDataInit");
+        }
+
+        private void OnTk2dSpriteDefinitionCtor(On.tk2dSpriteDefinition.orig_ctor orig, tk2dSpriteDefinition self)
+        {
+            DebugLog("!OnTk2dSpriteDefinitionCtor");
+            orig(self);
+            ChangeTk2dSpriteSpriteDef(self);
+            DebugLog("~OnTk2dSpriteDefinitionCtor");
         }
 
 #if !SPRITEDUMPER
-        //private void OnHealthManagerStart(On.HealthManager.orig_Start orig, HealthManager self)
-        //{
-        //    DebugLog("!OnHealthManagerStart");
-        //    orig(self);
-
-        //    foreach (var ts in self.gameObject.GetComponentsInChildren<tk2dSprite>())
-        //    {
-        //        ChangeTk2dSprite(ts);
-        //    }
-        //    DebugLog("~OnHealthManagerStart");
-        //}
-
-        private void OnTk2dSpriteAwake(On.tk2dSprite.orig_Awake orig, tk2dSprite self)
+        private void OnHealthManagerAwake(On.HealthManager.orig_Awake orig, HealthManager self)
         {
-            DebugLog("!OnTk2dSpriteAwake");
+            DebugLog("!OnHealthManagerAwake");
             orig(self);
 
-            ChangeTk2dSprite(self);
+            Transform highestParent = self.transform;
 
-            DebugLog("~OnTk2dSpriteAwake");
+            if (!self.gameObject.name.ToLower().Contains("radiance"))
+            {
+                while (highestParent.parent != null)
+                {
+                    highestParent = highestParent.parent;
+                }
+
+                foreach (var s in highestParent.gameObject.GetComponentsInChildren<tk2dSprite>())
+                {
+                    ChangeTk2dSprite(s);
+                }
+            }
+            else if (self.gameObject.name.Equals("Absolute Radiance"))
+            {
+                foreach (var s in highestParent.parent.Find("Abyss Pit").gameObject.GetComponentsInChildren<tk2dSprite>())
+                {
+                    ChangeTk2dSprite(s);
+                }
+            }
+            else if (self.gameObject.name.Equals("Radiance"))
+            {
+                foreach (var s in highestParent.parent.Find("Abyss Pit").gameObject.GetComponentsInChildren<tk2dSprite>())
+                {
+                    ChangeTk2dSprite(s);
+                }
+            }
+
+            DebugLog("~OnHealthManagerAwake");
         }
+
+        //private void OnTk2dSpriteAwake(On.tk2dSprite.orig_Awake orig, tk2dSprite self)
+        //{
+        //    DebugLog("!OnTk2dSpriteAwake");
+        //    orig(self);
+        //
+        //    ChangeTk2dSprite(self);
+        //
+        //    DebugLog("~OnTk2dSpriteAwake");
+        //}
 #endif
 
         public override void Initialize()
@@ -235,7 +270,7 @@ namespace EnemyChanger
             width = maxX - minX + 1;
             height = maxY - minY + 1;
 
-            #region Make bool array of important contents
+        #region Make bool array of important contents
 
             contents = new bool[height][];
             for (i = 0; i < contents.Length; i++)
@@ -275,7 +310,7 @@ namespace EnemyChanger
             if (saveTriangles)
                 SaveTriangle(contents, testSprite.name, 1000000);
 
-            #endregion
+        #endregion
 
             origTex = MakeTextureReadable(testSprite.texture);
             outTex = new Texture2D(width, height);
@@ -299,30 +334,149 @@ namespace EnemyChanger
 #endif
 
 #if !SPRITEDUMPER
-        private string GetGameObjectBaseName(GameObject go)
+        private Dictionary<string, byte[]> texCache = new();
+        private Dictionary<tk2dSpriteDefinition, byte[]> spriteDefinitionCache = new();
+
+        private string GetTextureHash(byte[] pngBytes)
         {
-            DebugLog("!GetGameObjectBaseName");
-            string ret = go.name;
-            ret = ret.ToLower();
-            ret.Replace("(clone)", "");
-            ret = ret.Trim();
-            ret.Replace("Cln", "");
-            ret = ret.Trim();
-            ret = Regex.Replace(ret, @"\([0-9+]+\)", "");
-            ret = ret.Trim();
-            ret = Regex.Replace(ret, @"[0-9+]+$", "");
-            ret = ret.Trim();
-            DebugLog("~GetGameObjectBaseName");
-            return ret;
+            //MD5 hash = new MD5CryptoServiceProvider();
+            SHA512 hash = new SHA512Managed();
+            return BitConverter.ToString(hash.ComputeHash(pngBytes)).Replace("-", "");
         }
 
         private void ChangeTk2dSprite(tk2dSprite self)
         {
             DebugLog("!ChangeTk2dSprite");
-            string spriteCollectionName = $"{self.Collection.spriteCollectionName} - {GetGameObjectBaseName(self.gameObject)}";
-            if (File.Exists($"{this.DIR}/{spriteCollectionName}.png"))
+            //ChangeTk2dSpriteSpriteDef(self.GetCurrentSpriteDef());
+
+            var collection = self.GetCurrentSpriteDef();
+            if (spriteDefinitionCache.ContainsKey(collection))
             {
-                using (FileStream fileStream = new FileStream($"{this.DIR}/{spriteCollectionName}.png", FileMode.Open))
+                //Texture2D texture2D = new Texture2D(2, 2);
+                //texture2D.LoadImage(spriteDefinitionCache[collection], false);
+                //var tmpTex = collection.materialInst.mainTexture;
+                //collection.materialInst.mainTexture = texture2D;
+                //Texture2D.DestroyImmediate(tmpTex);
+            }
+            else
+            {
+                Texture2D origTex = (Texture2D) collection.materialInst.mainTexture;
+                Texture2D readTex = EnemyChanger.MakeTextureReadable(origTex);
+                byte[] hashBytes = readTex.GetRawTextureData();
+                string spriteCollectionName = GetTextureHash(hashBytes);
+                if (File.Exists($"{this._dir}/{spriteCollectionName}.png"))
+                {
+                    using (FileStream fileStream = new FileStream($"{this._dir}/{spriteCollectionName}.png", FileMode.Open))
+                    {
+                        if (fileStream != null)
+                        {
+                            byte[] array = new byte[fileStream.Length];
+                            fileStream.Read(array, 0, array.Length);
+                            Texture2D texture2D = new Texture2D(2, 2);
+                            texture2D.LoadImage(array, false);
+                            //var tmpTex = self.GetCurrentSpriteDef().material.mainTexture;
+                            collection.materialInst.mainTexture = texture2D;
+                            //Texture2D.DestroyImmediate(tmpTex);
+                            spriteDefinitionCache.Add(collection, array);
+                        }
+                    }
+                }
+                else if (GlobalSettings.DumpSprites)
+                {
+                    try
+                    {
+                        byte[] pngBytes = readTex.EncodeToPNG();
+                        SaveTex(pngBytes, $"{this._dir}/{spriteCollectionName}.png");
+                    }
+                    catch (Exception)
+                    {
+                        DebugLog("---ChangeTk2dSpriteSpriteDef");
+                    }
+                }
+                Object.DestroyImmediate(readTex);
+            }
+            DebugLog("~ChangeTk2dSprite");
+        }
+        private void ChangeTk2dSpriteCollectionData(tk2dSpriteCollectionData self)
+        {
+            DebugLog("!ChangeTk2dSpriteCollectionData");
+            for (int i = 0; i < self.textureInsts.Length; i++)
+            {
+
+                // TODO next things to test:
+                // tk2dSpriteCollectionData.materials
+                // tk2dSpriteCollectionData.textureInsts
+                // tk2dSpriteCollectionData.spriteDefinitions[].materialInst
+                Texture2D orig = (Texture2D) self.textureInsts[i];
+                Texture2D read = MakeTextureReadable(orig);
+                byte[] hashBytes = read.GetRawTextureData();
+                string spriteCollectionName = GetTextureHash(hashBytes);
+                if (texCache.ContainsKey(spriteCollectionName))
+                {
+                    Texture2D texture2D = new Texture2D(2, 2);
+                    texture2D.LoadImage(texCache[spriteCollectionName], false);
+                    var tmpTex = orig;
+                    self.textureInsts[i] = texture2D;
+                    Texture2D.DestroyImmediate(tmpTex);
+                }
+                else if (File.Exists($"{this._dir}/{spriteCollectionName}.png"))
+                {
+                    using (FileStream fileStream = new FileStream($"{this._dir}/{spriteCollectionName}.png", FileMode.Open))
+                    {
+                        if (fileStream != null)
+                        {
+                            byte[] array = new byte[fileStream.Length];
+                            fileStream.Read(array, 0, array.Length);
+                            Texture2D texture2D = new Texture2D(2, 2);
+                            texture2D.LoadImage(array, false);
+                            //var tmpTex = self.GetCurrentSpriteDef().material.mainTexture;
+                            self.textureInsts[i] = texture2D;
+                            //Texture2D.DestroyImmediate(tmpTex);
+                            texCache.Add(spriteCollectionName, array);
+                        }
+                    }
+                }
+                else if (GlobalSettings.DumpSprites)
+                {
+                    try
+                    {
+                        byte[] pngBytes = read.EncodeToPNG();
+                        SaveTex(pngBytes, $"{this._dir}/{spriteCollectionName}.png");
+                    }
+                    catch (Exception)
+                    {
+                        DebugLog("---ChangeTk2dSpriteSpriteDef");
+                    }
+                }
+            }
+            DebugLog("~ChangeTk2dSpriteCollectionData");
+        }
+        private void ChangeTk2dSpriteSpriteDef(tk2dSpriteDefinition self)
+        {
+            DebugLog("!ChangeTk2dSpriteSpriteDef");
+            GameCameras.instance.StartCoroutine(ChangeTk2dSpriteSpriteDefWorker(self));
+            DebugLog("~ChangeTk2dSpriteSpriteDef");
+        }
+        private IEnumerator ChangeTk2dSpriteSpriteDefWorker(tk2dSpriteDefinition self)
+        {
+            yield return new WaitWhile(() => self.material == null);
+            yield return new WaitWhile(() => self.material.mainTexture == null);
+            DebugLog("!ChangeTk2dSpriteSpriteDefWorker");
+            Texture2D origTex = (Texture2D) self.material.mainTexture;
+            Texture2D readTex = EnemyChanger.MakeTextureReadable(origTex);
+            byte[] hashBytes = readTex.GetRawTextureData();
+            string spriteCollectionName = GetTextureHash(hashBytes);
+            if (texCache.ContainsKey(spriteCollectionName))
+            {
+                Texture2D texture2D = new Texture2D(2, 2);
+                texture2D.LoadImage(texCache[spriteCollectionName], false);
+                var tmpTex = self.material.mainTexture;
+                self.material.mainTexture = texture2D;
+                Texture2D.DestroyImmediate(tmpTex);
+            }
+            else if (File.Exists($"{this._dir}/{spriteCollectionName}.png"))
+            {
+                using (FileStream fileStream = new FileStream($"{this._dir}/{spriteCollectionName}.png", FileMode.Open))
                 {
                     if (fileStream != null)
                     {
@@ -330,29 +484,28 @@ namespace EnemyChanger
                         fileStream.Read(array, 0, array.Length);
                         Texture2D texture2D = new Texture2D(2, 2);
                         texture2D.LoadImage(array, false);
-                        var tmpTex = self.GetCurrentSpriteDef().material.mainTexture;
-                        self.GetCurrentSpriteDef().material.mainTexture = texture2D;
-                        Texture2D.DestroyImmediate(tmpTex);
+                        //var tmpTex = self.GetCurrentSpriteDef().material.mainTexture;
+                        self.material.mainTexture = texture2D;
+                        //Texture2D.DestroyImmediate(tmpTex);
+                        texCache.Add(spriteCollectionName, array);
                     }
                 }
             }
-            else if (_globalSettings.DumpSprites)
+            else if (GlobalSettings.DumpSprites)
             {
                 try
                 {
-                    Texture2D tex =
-                        EnemyChanger.makeTextureReadable(
-                            (Texture2D) self.GetCurrentSpriteDef().material.mainTexture);
-
-                    saveTex(tex, $"{this.DIR}/{spriteCollectionName}.png");
-                    Texture2D.DestroyImmediate(tex);
+                    byte[] pngBytes = readTex.EncodeToPNG();
+                    SaveTex(pngBytes, $"{this._dir}/{spriteCollectionName}.png");
                 }
                 catch (Exception)
                 {
-                    DebugLog("---makeTextureReadable");
+                    DebugLog("---ChangeTk2dSpriteSpriteDef");
                 }
             }
-            DebugLog("~ChangeTk2dSprite");
+            Object.DestroyImmediate(readTex);
+            DebugLog("~ChangeTk2dSpriteSpriteDefWorker");
+            yield break;
         }
 #endif
 
@@ -360,11 +513,11 @@ namespace EnemyChanger
         {
             DebugLog("!makeTextureReadable");
             Texture2D ret = new Texture2D(orig.width, orig.height);
-            RenderTexture tempRt = RenderTexture.GetTemporary(orig.width, orig.height, 0);
+            RenderTexture tempRt = RenderTexture.GetTemporary(orig.width, orig.height, 0, RenderTextureFormat.Default, RenderTextureReadWrite.Linear);
             Graphics.Blit(orig, tempRt);
             RenderTexture tmpActiveRt = RenderTexture.active;
             RenderTexture.active = tempRt;
-            ret.ReadPixels(new Rect(0f, 0f, (float) tempRt.width, (float) tempRt.height), 0, 0);
+            ret.ReadPixels(new Rect(0f, 0f, tempRt.width, tempRt.height), 0, 0);
             ret.Apply();
             RenderTexture.active = tmpActiveRt;
             RenderTexture.ReleaseTemporary(tempRt);
@@ -372,15 +525,14 @@ namespace EnemyChanger
             return ret;
         }
 
-        private static void SaveTex(Texture2D tex, string filename)
+        private static void SaveTex(byte[] pngBytes, string filename)
         {
             DebugLog("!saveTex");
             using (FileStream fileStream2 = new FileStream(filename, FileMode.Create))
             {
                 if (fileStream2 != null)
                 {
-                    byte[] array2 = tex.EncodeToPNG();
-                    fileStream2.Write(array2, 0, array2.Length);
+                    fileStream2.Write(pngBytes, 0, pngBytes.Length);
                 }
             }
             DebugLog("~saveTex");
@@ -388,7 +540,7 @@ namespace EnemyChanger
 
         private static void DebugLog(string msg)
         {
-            Modding.Logger.Log($"[{typeof(EnemyChanger).FullName.Replace(".", "][")}] - {msg}");
+            Modding.Logger.LogDebug($"[{typeof(EnemyChanger).FullName.Replace(".", "][")}] - {msg}");
             Debug.Log($"[{typeof(EnemyChanger).FullName.Replace(".", "][")}] - {msg}");
         }
         private static void DebugLog(object msg)
