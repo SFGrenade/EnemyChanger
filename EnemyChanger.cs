@@ -2,15 +2,16 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
-using System.Linq;
 using System.Reflection;
-using System.Runtime.InteropServices;
 using System.Security.Cryptography;
-using System.Text.RegularExpressions;
+using HutongGames.PlayMaker.Actions;
+using JetBrains.Annotations;
+using Modding;
 using SFCore.Generics;
 using SFCore.Utils;
 using UnityEngine;
-using Object = UnityEngine.Object;
+using UObject = UnityEngine.Object;
+using UScene = UnityEngine.SceneManagement.Scene;
 
 namespace EnemyChanger
 {
@@ -19,80 +20,54 @@ namespace EnemyChanger
         public bool DumpSprites = false;
     }
 
+    [UsedImplicitly]
     class EnemyChanger : GlobalSettingsMod<EcGlobalSettings>
     {
         private readonly string _dir;
-        private readonly Texture2D _emptyTex = new Texture2D(2, 2);
 
         public override string GetVersion() => Util.GetVersion(Assembly.GetExecutingAssembly());
 
         public EnemyChanger() : base("Enemy Changer")
         {
-            for (int x = 0; x < _emptyTex.width; x++)
-            {
-                for (int y = 0; y < _emptyTex.height; y++)
-                {
-                    _emptyTex.SetPixel(x, y, new Color(0, 0, 0, 0));
-                }
-            }
-            _emptyTex.Apply(true);
-
             _dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "/Sprites/";
             
             if (!Directory.Exists(_dir)) Directory.CreateDirectory(_dir);
-
-            On.HealthManager.Awake += OnHealthManagerAwake;
-        }
-
-        private void OnHealthManagerAwake(On.HealthManager.orig_Awake orig, HealthManager self)
-        {
-            DebugLog("!OnHealthManagerAwake");
-            orig(self);
-
-            Transform highestParent = self.transform;
-
-            if (!self.gameObject.name.ToLower().Contains("radiance"))
-            {
-                while (highestParent.parent != null)
-                {
-                    highestParent = highestParent.parent;
-                }
-
-                foreach (var s in highestParent.gameObject.GetComponentsInChildren<tk2dSprite>())
-                {
-                    ChangeTk2dSprite(s);
-                }
-            }
-            else if (self.gameObject.name.Equals("Absolute Radiance"))
-            {
-                foreach (var s in highestParent.parent.Find("Abyss Pit").gameObject.GetComponentsInChildren<tk2dSprite>())
-                {
-                    ChangeTk2dSprite(s);
-                }
-            }
-            else if (self.gameObject.name.Equals("Radiance"))
-            {
-                foreach (var s in highestParent.parent.Find("Abyss Pit").gameObject.GetComponentsInChildren<tk2dSprite>())
-                {
-                    ChangeTk2dSprite(s);
-                }
-            }
-
-            DebugLog("~OnHealthManagerAwake");
         }
 
         public override void Initialize()
         {
             DebugLog("!Initialize");
+            
+            ModHooks.OnEnableEnemyHook += ModHooksOnOnEnableEnemyHook;
 
             DebugLog("~Initialize");
         }
 
+        private bool ModHooksOnOnEnableEnemyHook(GameObject enemy, bool isAlreadyDead)
+        {
+            foreach (var tk in enemy.GetComponentsInChildren<tk2dSprite>(true))
+            {
+                ChangeTk2dSprite(tk);
+            }
+
+            if (enemy.name == "Ghost Warrior Markoth")
+            {
+                // the fucking spears
+                PlayMakerFSM attackFsm = enemy.LocateMyFSM("Attacking");
+                GameObject go = attackFsm.GetAction<SpawnObjectFromGlobalPool>("Nail", 0).gameObject.Value;
+                foreach (var tk in go.GetComponentsInChildren<SpriteRenderer>(true))
+                {
+                    ChangeSprite(tk);
+                }
+            }
+            return isAlreadyDead;
+        }
+
         private Dictionary<tk2dSpriteDefinition, byte[]> spriteDefinitionCache = new();
+        private Dictionary<Texture2D, byte[]> spriteCache = new();
 
         private string GetTextureHash(byte[] pngBytes)
         {
-            //MD5 hash = new MD5CryptoServiceProvider();
             SHA512 hash = new SHA512Managed();
             return BitConverter.ToString(hash.ComputeHash(pngBytes)).Replace("-", "");
         }
@@ -100,55 +75,76 @@ namespace EnemyChanger
         private void ChangeTk2dSprite(tk2dSprite self)
         {
             DebugLog("!ChangeTk2dSprite");
-            //ChangeTk2dSpriteSpriteDef(self.GetCurrentSpriteDef());
 
             var collection = self.GetCurrentSpriteDef();
-            if (spriteDefinitionCache.ContainsKey(collection))
+            
+            if (spriteDefinitionCache.ContainsKey(collection)) return; // no need to change twice
+            
+            Texture2D origTex = (Texture2D) collection.materialInst.mainTexture;
+            Texture2D readTex = EnemyChanger.MakeTextureReadable(origTex);
+            byte[] hashBytes = readTex.GetRawTextureData();
+            string spriteCollectionName = GetTextureHash(hashBytes);
+            if (File.Exists($"{this._dir}/{spriteCollectionName}.png"))
             {
-                //Texture2D texture2D = new Texture2D(2, 2);
-                //texture2D.LoadImage(spriteDefinitionCache[collection], false);
-                //var tmpTex = collection.materialInst.mainTexture;
-                //collection.materialInst.mainTexture = texture2D;
-                //Texture2D.DestroyImmediate(tmpTex);
+                using FileStream fileStream = new FileStream($"{this._dir}/{spriteCollectionName}.png", FileMode.Open);
+                byte[] array = new byte[fileStream.Length];
+                fileStream.Read(array, 0, array.Length);
+                Texture2D texture2D = new Texture2D(2, 2);
+                texture2D.LoadImage(array, false);
+                collection.materialInst.mainTexture = texture2D;
+                spriteDefinitionCache.Add(collection, array);
             }
-            else
+            else if (GlobalSettings.DumpSprites)
             {
-                Texture2D origTex = (Texture2D) collection.materialInst.mainTexture;
-                Texture2D readTex = EnemyChanger.MakeTextureReadable(origTex);
-                byte[] hashBytes = readTex.GetRawTextureData();
-                string spriteCollectionName = GetTextureHash(hashBytes);
-                if (File.Exists($"{this._dir}/{spriteCollectionName}.png"))
+                try
                 {
-                    using (FileStream fileStream = new FileStream($"{this._dir}/{spriteCollectionName}.png", FileMode.Open))
-                    {
-                        if (fileStream != null)
-                        {
-                            byte[] array = new byte[fileStream.Length];
-                            fileStream.Read(array, 0, array.Length);
-                            Texture2D texture2D = new Texture2D(2, 2);
-                            texture2D.LoadImage(array, false);
-                            //var tmpTex = self.GetCurrentSpriteDef().material.mainTexture;
-                            collection.materialInst.mainTexture = texture2D;
-                            //Texture2D.DestroyImmediate(tmpTex);
-                            spriteDefinitionCache.Add(collection, array);
-                        }
-                    }
+                    byte[] pngBytes = readTex.EncodeToPNG();
+                    SaveTex(pngBytes, $"{this._dir}/{spriteCollectionName}.png");
                 }
-                else if (GlobalSettings.DumpSprites)
+                catch (Exception)
                 {
-                    try
-                    {
-                        byte[] pngBytes = readTex.EncodeToPNG();
-                        SaveTex(pngBytes, $"{this._dir}/{spriteCollectionName}.png");
-                    }
-                    catch (Exception)
-                    {
-                        DebugLog("---ChangeTk2dSpriteSpriteDef");
-                    }
+                    DebugLog("---ChangeTk2dSprite");
                 }
-                Object.DestroyImmediate(readTex);
             }
+            UObject.DestroyImmediate(readTex);
             DebugLog("~ChangeTk2dSprite");
+        }
+        private void ChangeSprite(SpriteRenderer self)
+        {
+            DebugLog("!ChangeSprite");
+
+            //var collection = self.sprite.texture;
+            //
+            //if (spriteCache.ContainsKey(collection)) return; // no need to change twice
+            
+            Texture2D origTex = self.sprite.texture;
+            Texture2D readTex = EnemyChanger.MakeTextureReadable(origTex);
+            byte[] hashBytes = readTex.GetRawTextureData();
+            string spriteCollectionName = GetTextureHash(hashBytes);
+            if (File.Exists($"{this._dir}/{spriteCollectionName}.png"))
+            {
+                using FileStream fileStream = new FileStream($"{this._dir}/{spriteCollectionName}.png", FileMode.Open);
+                byte[] array = new byte[fileStream.Length];
+                fileStream.Read(array, 0, array.Length);
+                Texture2D texture2D = new Texture2D(2, 2);
+                texture2D.LoadImage(array, false);
+                self.sprite = Sprite.Create(texture2D, new Rect(0, 0, texture2D.width, texture2D.height), new Vector2(0.5f, 0.5f), 64);
+                spriteCache.Add(texture2D, array);
+            }
+            else if (GlobalSettings.DumpSprites)
+            {
+                try
+                {
+                    byte[] pngBytes = readTex.EncodeToPNG();
+                    SaveTex(pngBytes, $"{this._dir}/{spriteCollectionName}.png");
+                }
+                catch (Exception)
+                {
+                    DebugLog("---ChangeSprite");
+                }
+            }
+            UObject.DestroyImmediate(readTex);
+            DebugLog("~ChangeSprite");
         }
 
         private static Texture2D MakeTextureReadable(Texture2D orig)
