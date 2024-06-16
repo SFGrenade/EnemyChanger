@@ -30,14 +30,14 @@ namespace EnemyChanger
         public EnemyChanger() : base("Enemy Changer")
         {
             _dir = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location) + "/Sprites/";
-            
+
             if (!Directory.Exists(_dir)) Directory.CreateDirectory(_dir);
         }
 
         public override void Initialize()
         {
             DebugLog("!Initialize");
-            
+
             ModHooks.OnEnableEnemyHook += ModHooksOnOnEnableEnemyHook;
 
             DebugLog("~Initialize");
@@ -77,9 +77,9 @@ namespace EnemyChanger
             DebugLog("!ChangeTk2dSprite");
 
             var collection = self.GetCurrentSpriteDef();
-            
+
             if (spriteDefinitionCache.ContainsKey(collection)) return; // no need to change twice
-            
+
             Texture2D origTex = (Texture2D) collection.materialInst.mainTexture;
             Texture2D readTex = EnemyChanger.MakeTextureReadable(origTex);
             byte[] hashBytes = readTex.GetRawTextureData();
@@ -116,7 +116,7 @@ namespace EnemyChanger
             //var collection = self.sprite.texture;
             //
             //if (spriteCache.ContainsKey(collection)) return; // no need to change twice
-            
+
             Texture2D origTex = self.sprite.texture;
             Texture2D readTex = EnemyChanger.MakeTextureReadable(origTex);
             byte[] hashBytes = readTex.GetRawTextureData();
