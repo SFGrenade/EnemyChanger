@@ -18,3 +18,8 @@ Next to the mod dll file, there should be a folder called `Sprites`.
 That folder will contain the image files you want the enemies to have in game.  
 Those files will have cryptic names like `0A2CE4059196B94F3DFB284FD91CD1498F41314C0987403F0662A75D8552F62B1303A530AB1A4B108037BC951AB637E368126BB486B917C1A0DC45F97EEC0BC8.png` for the texture of a Vengefly.  
 After putting textures there, just start the game again and see the textures for yourself.
+
+# EUPL
+                      Copyright (c) 2024 SFGrenade
+                      Licensed under the EUPL-1.2
+https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
