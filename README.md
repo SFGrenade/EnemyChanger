@@ -20,6 +20,6 @@ Those files will have cryptic names like `0A2CE4059196B94F3DFB284FD91CD1498F4131
 After putting textures there, just start the game again and see the textures for yourself.
 
 # EUPL
-                      Copyright (c) 2024 SFGrenade
+                      Copyright (c) 2025 SFGrenade
                       Licensed under the EUPL-1.2
 https://joinup.ec.europa.eu/collection/eupl/eupl-text-eupl-12
